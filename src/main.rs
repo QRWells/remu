@@ -1,7 +1,10 @@
 use clap::{arg, command, Parser};
-use log::*;
-use object::{Object, ObjectSection};
-use std::fs;
+use env_logger::Env;
+use goblin::Object;
+use std::{fs, path::Path};
+
+#[macro_use]
+extern crate log;
 
 /// Simulator for pipeline processors
 #[derive(Parser, Debug)]
@@ -12,27 +15,22 @@ struct Args {
     file: String,
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
 
-    println!("Hello, {}!", args.file);
+    // Setup logging to output all logs
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+
     // open the file as binary
-    if let Ok(file) = fs::read(args.file) {
-        // parse the file as an ELF object
-        if let Ok(file) = object::File::parse(&*file) {
-            // iterate over the sections
-            for section in file.sections() {
-                // print the section name and size
-                info!(
-                    "{}: {}",
-                    section.name().unwrap_or("<unnamed>"),
-                    section.size()
-                );
-            }
-        } else {
-            error!("Error parsing file");
+    let path = Path::new(&args.file);
+    let buffer = fs::read(path)?;
+    match Object::parse(&buffer)? {
+        Object::Elf(elf) => {
+            info!("elf: {:#?}", &elf.header);
         }
-    } else {
-        error!("Error opening file");
+        _ => {
+            error!("Unsupported file format");
+        }
     }
+    Ok(())
 }
