@@ -1,3 +1,7 @@
+#[allow(dead_code)]
+mod arch;
+mod cpu;
+
 use clap::{arg, command, Parser};
 use env_logger::Env;
 use goblin::Object;
