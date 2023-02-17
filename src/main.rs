@@ -1,6 +1,7 @@
 #[allow(dead_code)]
 mod arch;
 mod cpu;
+pub mod mem;
 
 use clap::{arg, command, Parser};
 use env_logger::Env;

@@ -1,4 +1,7 @@
-use super::{csr::Csr, reg::register_name};
+use super::{
+    csr::Csr,
+    reg::{f_register_name, x_register_name},
+};
 
 use core::{fmt, sync::atomic::Ordering as MemOrder};
 
@@ -692,12 +695,12 @@ impl RiscvInst {
             RiscvInst::Illegal => (),
 
             RiscvInst::Lui { rd, imm } | RiscvInst::Auipc { rd, imm } => {
-                write!(fmt, "{}, {:#x}", register_name(rd), (imm as u32) >> 12)?
+                write!(fmt, "{}, {:#x}", x_register_name(rd), (imm as u32) >> 12)?
             }
 
             RiscvInst::Jal { rd, imm } => {
                 let (sign, uimm) = if imm < 0 { ('-', -imm) } else { ('+', imm) };
-                write!(fmt, "{}, pc {} {}", register_name(rd), sign, uimm)?;
+                write!(fmt, "{}, pc {} {}", x_register_name(rd), sign, uimm)?;
                 if let Some(pc) = pc {
                     let target_pc = pc.wrapping_add(imm as u64);
                     write!(fmt, " <{:x}>", target_pc)?;
@@ -714,8 +717,8 @@ impl RiscvInst {
                 write!(
                     fmt,
                     "{}, {}, pc {} {}",
-                    register_name(rs1),
-                    register_name(rs2),
+                    x_register_name(rs1),
+                    x_register_name(rs2),
                     sign,
                     uimm
                 )?;
@@ -735,9 +738,9 @@ impl RiscvInst {
             | RiscvInst::Jalr { rd, rs1, imm } => write!(
                 fmt,
                 "{}, {}({})",
-                register_name(rd),
+                x_register_name(rd),
                 imm,
-                register_name(rs1)
+                x_register_name(rs1)
             )?,
 
             RiscvInst::Fence
@@ -748,7 +751,7 @@ impl RiscvInst {
             | RiscvInst::Sret
             | RiscvInst::Wfi => (),
             RiscvInst::SfenceVma { rs1, rs2 } => {
-                write!(fmt, "{}, {}", register_name(rs1), register_name(rs2))?
+                write!(fmt, "{}, {}", x_register_name(rs1), x_register_name(rs2))?
             }
 
             RiscvInst::Sb { rs1, rs2, imm }
@@ -757,9 +760,9 @@ impl RiscvInst {
             | RiscvInst::Sd { rs1, rs2, imm } => write!(
                 fmt,
                 "{}, {}({})",
-                register_name(rs2),
+                x_register_name(rs2),
                 imm,
-                register_name(rs1)
+                x_register_name(rs1)
             )?,
 
             RiscvInst::Addi { rd, rs1, imm }
@@ -777,8 +780,8 @@ impl RiscvInst {
             | RiscvInst::Sraiw { rd, rs1, imm } => write!(
                 fmt,
                 "{}, {}, {}",
-                register_name(rd),
-                register_name(rs1),
+                x_register_name(rd),
+                x_register_name(rs1),
                 imm
             )?,
 
@@ -812,9 +815,9 @@ impl RiscvInst {
             | RiscvInst::Remuw { rd, rs1, rs2 } => write!(
                 fmt,
                 "{}, {}, {}",
-                register_name(rd),
-                register_name(rs1),
-                register_name(rs2)
+                x_register_name(rd),
+                x_register_name(rs1),
+                x_register_name(rs2)
             )?,
 
             RiscvInst::Csrrw { rd, rs1, csr }
@@ -822,19 +825,19 @@ impl RiscvInst {
             | RiscvInst::Csrrc { rd, rs1, csr } => write!(
                 fmt,
                 "{}, #{}, {}",
-                register_name(rd),
+                x_register_name(rd),
                 csr,
-                register_name(rs1)
+                x_register_name(rs1)
             )?,
 
             RiscvInst::Csrrwi { rd, imm, csr }
             | RiscvInst::Csrrsi { rd, imm, csr }
             | RiscvInst::Csrrci { rd, imm, csr } => {
-                write!(fmt, "{}, #{}, {}", register_name(rd), csr, imm)?
+                write!(fmt, "{}, #{}, {}", x_register_name(rd), csr, imm)?
             }
 
             RiscvInst::LrW { rd, rs1, .. } | RiscvInst::LrD { rd, rs1, .. } => {
-                write!(fmt, "{}, ({})", register_name(rd), register_name(rs1))?
+                write!(fmt, "{}, ({})", x_register_name(rd), x_register_name(rs1))?
             }
 
             RiscvInst::ScW { rd, rs1, rs2, .. }
@@ -859,18 +862,26 @@ impl RiscvInst {
             | RiscvInst::AmomaxuD { rd, rs1, rs2, .. } => write!(
                 fmt,
                 "{}, {}, ({})",
-                register_name(rd),
-                register_name(rs2),
-                register_name(rs1)
+                x_register_name(rd),
+                x_register_name(rs2),
+                x_register_name(rs1)
             )?,
 
-            RiscvInst::Flw { frd, rs1, imm } | RiscvInst::Fld { frd, rs1, imm } => {
-                write!(fmt, "f{}, {}({})", frd, imm, register_name(rs1))?
-            }
+            RiscvInst::Flw { frd, rs1, imm } | RiscvInst::Fld { frd, rs1, imm } => write!(
+                fmt,
+                "{}, {}({})",
+                f_register_name(frd),
+                imm,
+                x_register_name(rs1)
+            )?,
 
-            RiscvInst::Fsw { rs1, frs2, imm } | RiscvInst::Fsd { rs1, frs2, imm } => {
-                write!(fmt, "f{}, {}({})", frs2, imm, register_name(rs1))?
-            }
+            RiscvInst::Fsw { rs1, frs2, imm } | RiscvInst::Fsd { rs1, frs2, imm } => write!(
+                fmt,
+                "{}, {}({})",
+                f_register_name(frs2),
+                imm,
+                x_register_name(rs1)
+            )?,
 
             RiscvInst::FaddS {
                 frd, frs1, frs2, ..
@@ -905,14 +916,20 @@ impl RiscvInst {
             | RiscvInst::FsgnjnD { frd, frs1, frs2 }
             | RiscvInst::FsgnjxD { frd, frs1, frs2 }
             | RiscvInst::FminD { frd, frs1, frs2 }
-            | RiscvInst::FmaxD { frd, frs1, frs2 } => {
-                write!(fmt, "f{}, f{}, f{}", frd, frs1, frs2)?
-            }
+            | RiscvInst::FmaxD { frd, frs1, frs2 } => write!(
+                fmt,
+                "{}, {}, {}",
+                f_register_name(frd),
+                f_register_name(frs1),
+                f_register_name(frs2)
+            )?,
 
             RiscvInst::FsqrtS { frd, frs1, .. }
             | RiscvInst::FsqrtD { frd, frs1, .. }
             | RiscvInst::FcvtSD { frd, frs1, .. }
-            | RiscvInst::FcvtDS { frd, frs1, .. } => write!(fmt, "f{}, f{}", frd, frs1)?,
+            | RiscvInst::FcvtDS { frd, frs1, .. } => {
+                write!(fmt, "{}, {}", f_register_name(frd), f_register_name(frs1))?
+            }
 
             RiscvInst::FcvtWS { rd, frs1, .. }
             | RiscvInst::FcvtWuS { rd, frs1, .. }
@@ -925,7 +942,9 @@ impl RiscvInst {
             | RiscvInst::FcvtLD { rd, frs1, .. }
             | RiscvInst::FcvtLuD { rd, frs1, .. }
             | RiscvInst::FmvXD { rd, frs1 }
-            | RiscvInst::FclassD { rd, frs1 } => write!(fmt, "{}, f{}", register_name(rd), frs1)?,
+            | RiscvInst::FclassD { rd, frs1 } => {
+                write!(fmt, "{}, {}", x_register_name(rd), f_register_name(frs1))?
+            }
 
             RiscvInst::FcvtSW { frd, rs1, .. }
             | RiscvInst::FcvtSWu { frd, rs1, .. }
@@ -936,16 +955,22 @@ impl RiscvInst {
             | RiscvInst::FcvtDWu { frd, rs1, .. }
             | RiscvInst::FcvtDL { frd, rs1, .. }
             | RiscvInst::FcvtDLu { frd, rs1, .. }
-            | RiscvInst::FmvDX { frd, rs1 } => write!(fmt, "f{}, {}", frd, register_name(rs1))?,
+            | RiscvInst::FmvDX { frd, rs1 } => {
+                write!(fmt, "{}, {}", f_register_name(frd), x_register_name(rs1))?
+            }
 
             RiscvInst::FeqS { rd, frs1, frs2 }
             | RiscvInst::FltS { rd, frs1, frs2 }
             | RiscvInst::FleS { rd, frs1, frs2 }
             | RiscvInst::FeqD { rd, frs1, frs2 }
             | RiscvInst::FltD { rd, frs1, frs2 }
-            | RiscvInst::FleD { rd, frs1, frs2 } => {
-                write!(fmt, "{}, f{}, f{}", register_name(rd), frs1, frs2)?
-            }
+            | RiscvInst::FleD { rd, frs1, frs2 } => write!(
+                fmt,
+                "{}, {}, {}",
+                x_register_name(rd),
+                f_register_name(frs1),
+                f_register_name(frs2)
+            )?,
 
             RiscvInst::FmaddS {
                 frd,
@@ -1002,7 +1027,14 @@ impl RiscvInst {
                 frs2,
                 frs3,
                 ..
-            } => write!(fmt, "f{}, f{}, f{}, f{}", frd, frs1, frs2, frs3)?,
+            } => write!(
+                fmt,
+                "{}, {}, {}, {}",
+                f_register_name(frd),
+                f_register_name(frs1),
+                f_register_name(frs2),
+                f_register_name(frs3)
+            )?,
         }
 
         Ok(())
