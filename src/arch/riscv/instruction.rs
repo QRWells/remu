@@ -25,6 +25,12 @@ impl From<Ordering> for MemOrder {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum RiscvInstWrapper {
+    Full(RiscvInst),
+    Compact(RiscvInst),
+}
+
 /// RISC-V Instructions
 #[rustfmt::skip]
 #[derive(Debug,Clone, Copy, PartialEq)]

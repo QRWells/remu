@@ -1,54 +1,61 @@
-use num_traits::{Signed, Zero};
-
-use crate::{cpu::Cpu, mem::Memory};
+use crate::{bus::Bus, cpu::Cpu};
 
 use super::{
+    bus::RiscvBus,
     decode::{decode, decode_compressed},
-    instruction::RiscvInst,
+    exception::Exception,
+    instruction::{RiscvInst, RiscvInstWrapper},
+    mmu::MMU,
 };
 
 pub struct RV64Cpu {
+    pub(crate) clock: u64,
     pub(crate) pc: u64,
+    pub(crate) satp: u64,
     pub(crate) x: [u64; 32],
     pub(crate) f: [f64; 32],
-    pub(crate) mem: Memory,
+    pub(crate) bus: RiscvBus,
+    pub(crate) mmu: MMU,
 }
 
 impl RV64Cpu {
-    pub fn fetch(&mut self) -> (RiscvInst, bool) {
-        match self.mem[self.pc as usize] & 0x3 {
-            0x3 => {
-                let inst = u32::from_le_bytes([
-                    self.mem[self.pc as usize],
-                    self.mem[self.pc as usize + 1],
-                    self.mem[self.pc as usize + 2],
-                    self.mem[self.pc as usize + 3],
-                ]);
-                (decode(inst), false)
-            }
-            _ => {
-                let inst = u16::from_le_bytes([
-                    self.mem[self.pc as usize],
-                    self.mem[self.pc as usize + 1],
-                ]);
-                (decode_compressed(inst), true)
-            }
+    fn new() -> Self {
+        Self {
+            clock: 0,
+            pc: 0,
+            satp: 0,
+            x: [0; 32],
+            f: [0.0; 32],
+            bus: RiscvBus::new(),
+            mmu: MMU::new(),
+        }
+    }
+
+    pub fn fetch(&mut self) -> Result<RiscvInstWrapper, Exception> {
+        let addr = self.mmu.translate(self.pc).expect("Translation failed");
+        match self.bus.load(addr, 1) {
+            Ok(val) => match val & 0x3 {
+                0x3 => {
+                    let inst = u32::from_le(self.bus.load(addr, 4).unwrap() as u32);
+                    Ok(RiscvInstWrapper::Full(decode(inst)))
+                }
+                _ => {
+                    let inst = u16::from_le(self.bus.load(addr, 2).unwrap() as u16);
+                    Ok(RiscvInstWrapper::Compact(decode_compressed(inst)))
+                }
+            },
+            Err(e) => Err(e),
         }
     }
 }
 
 impl Cpu for RV64Cpu {
-    fn new(mem: Memory) -> Self {
-        Self {
-            pc: 0,
-            x: [0; 32],
-            f: [0.0; 32],
-            mem,
-        }
+    fn init(&mut self) {
+        self.bus.init();
     }
 
     fn load(&mut self, data: Vec<u8>) {
-        self.mem.load_data(&data, 0);
+        self.bus.load_data(0x8000_0000, &data).expect("Load failed");
     }
 
     fn reset(&mut self) {
@@ -58,58 +65,72 @@ impl Cpu for RV64Cpu {
 
     fn execute(&mut self) {
         loop {
-            let (inst, comp) = self.fetch();
+            let inst = self.fetch();
+            let inst_with_len = match inst {
+                Ok(inst) => inst,
+                Err(e) => {
+                    println!("Exception: {:?}", e);
+                    break;
+                }
+            };
+            let inst = match inst_with_len {
+                RiscvInstWrapper::Full(inst) => inst,
+                RiscvInstWrapper::Compact(inst) => inst,
+            };
             debug!("pc:{:#x}\t{}", self.pc, inst);
             match inst {
                 RiscvInst::Illegal => break,
                 RiscvInst::Lb { rd, rs1, imm } => {
+                    let addr = self
+                        .mmu
+                        .translate(addr_add(self.x[rs1 as usize], imm))
+                        .expect("Translation failed");
                     self.x[rd as usize] =
-                        self.mem[addr_add(self.x[rs1 as usize], imm) as usize] as i8 as u64;
+                        self.bus.load_byte(addr).expect("Load failed") as i8 as u64;
                 }
                 RiscvInst::Lh { rd, rs1, imm } => {
-                    self.x[rd as usize] = i16::from_le_bytes([
-                        self.mem[addr_add(self.x[rs1 as usize], imm) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 1) as usize],
-                    ]) as u64;
+                    let addr = self
+                        .mmu
+                        .translate(addr_add(self.x[rs1 as usize], imm))
+                        .expect("Translation failed");
+                    self.x[rd as usize] =
+                        self.bus.load_half(addr).expect("Load failed") as i16 as u64;
                 }
                 RiscvInst::Lw { rd, rs1, imm } => {
-                    self.x[rd as usize] = i32::from_le_bytes([
-                        self.mem[addr_add(self.x[rs1 as usize], imm) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 1) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 2) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 3) as usize],
-                    ]) as u64;
+                    let addr = self
+                        .mmu
+                        .translate(addr_add(self.x[rs1 as usize], imm))
+                        .expect("Translation failed");
+                    self.x[rd as usize] =
+                        self.bus.load_word(addr).expect("Load failed") as i32 as u64;
                 }
                 RiscvInst::Ld { rd, rs1, imm } => {
-                    self.x[rd as usize] = u64::from_le_bytes([
-                        self.mem[addr_add(self.x[rs1 as usize], imm) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 1) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 2) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 3) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 4) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 5) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 6) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 7) as usize],
-                    ]);
+                    let addr = self
+                        .mmu
+                        .translate(addr_add(self.x[rs1 as usize], imm))
+                        .expect("Translation failed");
+                    self.x[rd as usize] = self.bus.load(addr, 8).expect("Load failed");
                 }
                 RiscvInst::Lbu { rd, rs1, imm } => {
-                    // zero extend
-                    self.x[rd as usize] =
-                        self.mem[addr_add(self.x[rs1 as usize], imm) as usize] as u64;
+                    let addr = self
+                        .mmu
+                        .translate(addr_add(self.x[rs1 as usize], imm))
+                        .expect("Translation failed");
+                    self.x[rd as usize] = self.bus.load_byte(addr).expect("Load failed") as u64;
                 }
                 RiscvInst::Lhu { rd, rs1, imm } => {
-                    self.x[rd as usize] = u16::from_le_bytes([
-                        self.mem[addr_add(self.x[rs1 as usize], imm) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 1) as usize],
-                    ]) as u64;
+                    let addr = self
+                        .mmu
+                        .translate(addr_add(self.x[rs1 as usize], imm))
+                        .expect("Translation failed");
+                    self.x[rd as usize] = self.bus.load_half(addr).expect("Load failed") as u64;
                 }
                 RiscvInst::Lwu { rd, rs1, imm } => {
-                    self.x[rd as usize] = u32::from_le_bytes([
-                        self.mem[addr_add(self.x[rs1 as usize], imm) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 1) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 2) as usize],
-                        self.mem[addr_add(self.x[rs1 as usize], imm + 3) as usize],
-                    ]) as u64;
+                    let addr = self
+                        .mmu
+                        .translate(addr_add(self.x[rs1 as usize], imm))
+                        .expect("Translation failed");
+                    self.x[rd as usize] = self.bus.load_word(addr).expect("Load failed") as u64;
                 }
                 RiscvInst::Fence => {}
                 RiscvInst::FenceI => {}
@@ -192,28 +213,49 @@ impl Cpu for RV64Cpu {
                     self.x[rd as usize] = (self.x[rs1 as usize] as i32).wrapping_shr(shamt) as u64;
                 }
                 RiscvInst::Sb { rs1, rs2, imm } => {
-                    let addr = self.x[rs1 as usize].wrapping_add(imm as u64);
-                    self.mem[addr as usize] = self.x[rs2 as usize] as u8;
+                    let addr = self
+                        .mmu
+                        .translate(self.x[rs1 as usize].wrapping_add(imm as u64))
+                        .expect("memory access violation");
+                    self.bus
+                        .store_byte(addr, self.x[rs2 as usize] as u8)
+                        .expect("memory access violation");
                 }
                 RiscvInst::Sh { rs1, rs2, imm } => {
-                    let addr = self.x[rs1 as usize].wrapping_add(imm as u64);
+                    let addr = self
+                        .mmu
+                        .translate(self.x[rs1 as usize].wrapping_add(imm as u64))
+                        .expect("memory access violation");
                     let bytes = self.x[rs2 as usize].to_le_bytes();
-                    self.mem[addr as usize] = bytes[0];
-                    self.mem[addr as usize + 1] = bytes[1];
+                    self.bus
+                        .store_half(addr, [bytes[0], bytes[1]])
+                        .expect("memory access violation");
                 }
                 RiscvInst::Sw { rs1, rs2, imm } => {
-                    let addr = self.x[rs1 as usize].wrapping_add(imm as u64);
+                    let addr = self
+                        .mmu
+                        .translate(self.x[rs1 as usize].wrapping_add(imm as u64))
+                        .expect("memory access violation");
                     let bytes = self.x[rs2 as usize].to_le_bytes();
-                    for i in 0..4 {
-                        self.mem[addr as usize + i] = bytes[i];
-                    }
+                    self.bus
+                        .store_word(addr, [bytes[0], bytes[1], bytes[2], bytes[3]])
+                        .expect("memory access violation");
                 }
                 RiscvInst::Sd { rs1, rs2, imm } => {
-                    let addr = self.x[rs1 as usize].wrapping_add(imm as u64);
+                    let addr = self
+                        .mmu
+                        .translate(self.x[rs1 as usize].wrapping_add(imm as u64))
+                        .expect("memory access violation");
                     let bytes = self.x[rs2 as usize].to_le_bytes();
-                    for i in 0..8 {
-                        self.mem[addr as usize + i] = bytes[i];
-                    }
+                    self.bus
+                        .store_double(
+                            addr,
+                            [
+                                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
+                                bytes[6], bytes[7],
+                            ],
+                        )
+                        .expect("memory access violation");
                 }
                 RiscvInst::Add { rd, rs1, rs2 } => {
                     self.x[rd as usize] = self.x[rs1 as usize].wrapping_add(self.x[rs2 as usize]);
@@ -431,14 +473,22 @@ impl Cpu for RV64Cpu {
                 | RiscvInst::AmomaxuD { rd, rs1, rs2, aqrl } => todo!("atomic"),
 
                 RiscvInst::Flw { frd, rs1, imm } => {
-                    let addr = self.x[rs1 as usize].wrapping_add(imm as u64);
-                    let val = self.mem.read_u32(addr as usize);
+                    let addr = self
+                        .mmu
+                        .translate(self.x[rs1 as usize].wrapping_add(imm as u64))
+                        .expect("memory access invalid");
+                    let val = self.bus.load_word(addr).expect("memory access invalid");
                     self.f[frd as usize] = f32::from_bits(val) as f64;
                 }
                 RiscvInst::Fsw { rs1, frs2, imm } => {
-                    let addr = self.x[rs1 as usize].wrapping_add(imm as u64);
+                    let addr = self
+                        .mmu
+                        .translate(self.x[rs1 as usize].wrapping_add(imm as u64))
+                        .expect("memory access invalid");
                     let val = self.f[frs2 as usize] as f32;
-                    self.mem.write_u32(addr as usize, val.to_bits());
+                    self.bus
+                        .store_word(addr, val.to_bits().to_le_bytes())
+                        .expect("memory access invalid");
                 }
                 RiscvInst::FaddS {
                     frd,
@@ -621,13 +671,21 @@ impl Cpu for RV64Cpu {
                     self.f[frd as usize] = (-a * b + c) as f64;
                 }
                 RiscvInst::Fld { frd, rs1, imm } => {
-                    let addr = self.x[rs1 as usize] as usize + imm as usize;
-                    self.f[frd as usize] = f64::from_bits(self.mem.read_u64(addr));
+                    let addr = self
+                        .mmu
+                        .translate(addr_add(self.x[rs1 as usize], imm))
+                        .expect("memory fault");
+                    self.f[frd as usize] =
+                        f64::from_bits(self.bus.load_double(addr).expect("memory fault"));
                 }
                 RiscvInst::Fsd { rs1, frs2, imm } => {
-                    let addr = self.x[rs1 as usize] as usize + imm as usize;
-                    let b = self.f[frs2 as usize];
-                    self.mem.write_u64(addr, f64::to_bits(b));
+                    let addr = self
+                        .mmu
+                        .translate(addr_add(self.x[rs1 as usize], imm))
+                        .expect("memory fault");
+                    self.bus
+                        .store_double(addr, self.f[frs2 as usize].to_bits().to_le_bytes())
+                        .expect("memory fault");
                 }
                 RiscvInst::FaddD {
                     frd,
@@ -821,7 +879,10 @@ impl Cpu for RV64Cpu {
                 RiscvInst::Wfi => todo!(),
                 RiscvInst::SfenceVma { rs1, rs2 } => todo!(),
             }
-            self.pc += if comp { 2 } else { 4 };
+            self.pc += match inst_with_len {
+                RiscvInstWrapper::Full(_) => 4,
+                RiscvInstWrapper::Compact(_) => 2,
+            }
         }
     }
 }
@@ -831,32 +892,30 @@ fn float_classify(x: f32) -> u64 {
     if x == f32::NEG_INFINITY {
         res |= 1;
     }
-    if x.is_normal() && x.is_negative() {
+    if x.is_normal() && x.is_sign_negative() {
         res |= 2;
     }
-    if x.is_subnormal() && x.is_negative() {
+    if x.is_subnormal() && x.is_sign_negative() {
         res |= 4;
     }
-    if x.is_zero() && x.is_negative() {
+    if x == 0.0 && x.is_sign_negative() {
         res |= 8;
     }
-    if x.is_zero() && x.is_positive() {
+    if x == 0.0 && x.is_sign_positive() {
         res |= 16;
     }
-    if x.is_subnormal() && x.is_positive() {
+    if x.is_subnormal() && x.is_sign_positive() {
         res |= 32;
     }
-    if x.is_normal() && x.is_positive() {
+    if x.is_normal() && x.is_sign_positive() {
         res |= 64;
     }
     if x == f32::INFINITY {
         res |= 128;
     }
-    // signaling NaN
     if x.is_nan() && !quiet_nan(x) {
         res |= 256;
     }
-    // quiet NaN
     if x.is_nan() && quiet_nan(x) {
         res |= 512;
     }
@@ -879,10 +938,10 @@ fn double_classify(x: f64) -> u64 {
     if x.is_subnormal() && x.is_sign_negative() {
         res |= 4;
     }
-    if x.is_zero() && x.is_sign_negative() {
+    if x == 0.0 && x.is_sign_negative() {
         res |= 8;
     }
-    if x.is_zero() && x.is_sign_positive() {
+    if x == 0.0 && x.is_sign_positive() {
         res |= 16;
     }
     if x.is_subnormal() && x.is_sign_positive() {
@@ -894,11 +953,9 @@ fn double_classify(x: f64) -> u64 {
     if x == f64::INFINITY {
         res |= 128;
     }
-    // signaling NaN
     if x.is_nan() && !quiet_nan_double(x) {
         res |= 256;
     }
-    // quiet NaN
     if x.is_nan() && quiet_nan_double(x) {
         res |= 512;
     }
@@ -940,13 +997,17 @@ mod test {
             0x0000001f,
         ];
         let data: Vec<u8> = data.iter().flat_map(|x| x.to_le_bytes().to_vec()).collect();
-        let mem = Memory::new(2048, crate::mem::Endianness::Little);
-        let mut cpu = RV64Cpu::new(mem);
-        cpu.x[1] = 0x70; // ra
-        cpu.x[2] = 1024u64.to_le(); // sp
-        cpu.x[10] = 5u64.to_le(); // a0
+        let mut cpu = RV64Cpu::new();
+        cpu.init();
+
+        cpu.pc = 0x8000_0000;
+        cpu.x[1] = 0x8000_0000 + 0x70; // ra
+        cpu.x[2] = 0x8000_0000 + 0x400; // sp
+        cpu.x[10] = 5; // a0
+
         cpu.load(data);
         cpu.execute();
-        assert_eq!(cpu.x[10], 120u64.to_le());
+
+        assert_eq!(cpu.x[10], 120u64);
     }
 }

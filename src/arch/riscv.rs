@@ -1,6 +1,8 @@
+mod bus;
 pub mod cpu;
-pub mod csr;
-pub mod decode;
-pub mod instruction;
-pub mod mmu;
-pub mod reg;
+mod csr;
+mod decode;
+mod exception;
+mod instruction;
+mod mmu;
+mod reg;

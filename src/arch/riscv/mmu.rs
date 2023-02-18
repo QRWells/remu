@@ -15,44 +15,83 @@ pub enum Accessibility {
     Execute,
 }
 
-type PTE = u64;
+pub struct PageTableEntry64(u64);
 
-pub fn check_permission(pte: PTE, access: Accessibility, prv: u8, status: u64) -> Result<(), ()> {
-    if pte & PTE_V == 0 {
-        return Err(());
-    }
-
-    if prv == 0 {
-        if pte & PTE_U == 0 {
+impl PageTableEntry64 {
+    pub fn check_permission(&self, access: Accessibility, prv: u8, status: u64) -> Result<(), ()> {
+        if self.0 & PTE_V == 0 {
             return Err(());
         }
-    } else {
-        if pte & PTE_U != 0 && status & (1 << 18) == 0 {
+
+        if prv == 0 {
+            if self.0 & PTE_U == 0 {
+                return Err(());
+            }
+        } else {
+            if self.0 & PTE_U != 0 && status & (1 << 18) == 0 {
+                return Err(());
+            }
+        }
+
+        if self.0 & PTE_A == 0 {
             return Err(());
         }
-    }
 
-    if pte & PTE_A == 0 {
-        return Err(());
-    }
-
-    match access {
-        Accessibility::Read => {
-            if pte & PTE_R == 0 && (pte & PTE_X == 0 || status & (1 << 19) == 0) {
-                return Err(());
+        match access {
+            Accessibility::Read => {
+                if self.0 & PTE_R == 0 && (self.0 & PTE_X == 0 || status & (1 << 19) == 0) {
+                    return Err(());
+                }
+            }
+            Accessibility::Write => {
+                if self.0 & PTE_W == 0 || self.0 & PTE_D == 0 {
+                    return Err(());
+                }
+            }
+            Accessibility::Execute => {
+                if self.0 & PTE_X == 0 {
+                    return Err(());
+                }
             }
         }
-        Accessibility::Write => {
-            if pte & PTE_W == 0 || pte & PTE_D == 0 {
-                return Err(());
-            }
-        }
-        Accessibility::Execute => {
-            if pte & PTE_X == 0 {
-                return Err(());
-            }
+
+        Ok(())
+    }
+    pub fn is_valid(&self) -> bool {
+        self.0 & PTE_V != 0
+    }
+}
+
+pub enum AddressingMode {
+    Bare,
+    Sv32,
+    Sv39,
+    Sv48,
+    Sv57,
+}
+
+pub struct MMU {
+    addressing_mode: AddressingMode,
+}
+
+impl MMU {
+    pub fn new() -> Self {
+        Self {
+            addressing_mode: AddressingMode::Bare,
         }
     }
 
-    Ok(())
+    pub fn translate(&self, addr: u64) -> Result<u64, ()> {
+        match self.addressing_mode {
+            AddressingMode::Bare => self.translate_bare(addr),
+            AddressingMode::Sv32
+            | AddressingMode::Sv39
+            | AddressingMode::Sv48
+            | AddressingMode::Sv57 => todo!("translate sv32, sv39, sv48, sv57"),
+        }
+    }
+
+    fn translate_bare(&self, addr: u64) -> Result<u64, ()> {
+        Ok(addr)
+    }
 }

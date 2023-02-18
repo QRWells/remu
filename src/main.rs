@@ -1,6 +1,8 @@
 #[allow(dead_code)]
-mod arch;
-mod cpu;
+pub mod arch;
+pub mod board;
+pub mod bus;
+pub mod cpu;
 pub mod mem;
 
 use clap::{arg, command, Parser};
