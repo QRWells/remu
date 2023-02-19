@@ -2,20 +2,26 @@ use crate::{bus::Bus, cpu::Cpu};
 
 use super::{
     bus::RiscvBus,
+    csr::Csrs,
     decode::{decode, decode_compressed},
     exception::Exception,
     instruction::{RiscvInst, RiscvInstWrapper},
     mmu::MMU,
 };
 
+const MACHINE_MODE: u8 = 0;
+const SUPERVISOR_MODE: u8 = 1;
+const USER_MODE: u8 = 2;
+
 pub struct RV64Cpu {
     pub(crate) clock: u64,
     pub(crate) pc: u64,
-    pub(crate) satp: u64,
     pub(crate) x: [u64; 32],
     pub(crate) f: [f64; 32],
     pub(crate) bus: RiscvBus,
     pub(crate) mmu: MMU,
+    pub(crate) csr: Csrs,
+    pub(crate) mode: u8,
 }
 
 impl RV64Cpu {
@@ -23,11 +29,12 @@ impl RV64Cpu {
         Self {
             clock: 0,
             pc: 0,
-            satp: 0,
             x: [0; 32],
             f: [0.0; 32],
             bus: RiscvBus::new(),
             mmu: MMU::new(),
+            csr: Csrs::new(),
+            mode: MACHINE_MODE,
         }
     }
 
@@ -353,12 +360,38 @@ impl Cpu for RV64Cpu {
                     todo!("ebreak")
                 }
 
-                RiscvInst::Csrrw { rd, rs1, csr }
-                | RiscvInst::Csrrs { rd, rs1, csr }
-                | RiscvInst::Csrrc { rd, rs1, csr } => todo!("csr"),
-                RiscvInst::Csrrwi { rd, imm, csr }
-                | RiscvInst::Csrrsi { rd, imm, csr }
-                | RiscvInst::Csrrci { rd, imm, csr } => todo!("csr"),
+                RiscvInst::Csrrw { rd, rs1, csr } => {
+                    let t = self.csr.load(csr.into());
+                    self.csr.store(csr.into(), self.x[rs1 as usize]);
+                    self.x[rd as usize] = t.into();
+                }
+                RiscvInst::Csrrs { rd, rs1, csr } => {
+                    let t = self.csr.load(csr.into());
+                    self.csr
+                        .store(csr.into(), (t | self.x[rs1 as usize]).into());
+                    self.x[rd as usize] = t.into();
+                }
+                RiscvInst::Csrrc { rd, rs1, csr } => {
+                    let t = self.csr.load(csr.into());
+                    self.csr
+                        .store(csr.into(), (t & !self.x[rs1 as usize]).into());
+                    self.x[rd as usize] = t.into();
+                }
+                RiscvInst::Csrrwi { rd, imm, csr } => {
+                    let t = self.csr.load(csr.into());
+                    self.csr.store(csr.into(), imm as u64);
+                    self.x[rd as usize] = t.into();
+                }
+                RiscvInst::Csrrsi { rd, imm, csr } => {
+                    let t = self.csr.load(csr.into());
+                    self.csr.store(csr.into(), (t | (imm as u64)).into());
+                    self.x[rd as usize] = t.into();
+                }
+                RiscvInst::Csrrci { rd, imm, csr } => {
+                    let t = self.csr.load(csr.into());
+                    self.csr.store(csr.into(), (t & !(imm as u64)).into());
+                    self.x[rd as usize] = t.into();
+                }
 
                 RiscvInst::Mul { rd, rs1, rs2 } => {
                     self.x[rd as usize] = self.x[rs1 as usize].wrapping_mul(self.x[rs2 as usize]);
@@ -884,6 +917,7 @@ impl Cpu for RV64Cpu {
                 RiscvInstWrapper::Compact(_) => 2,
             }
         }
+        self.x[0] = 0; // x0 is always 0
     }
 }
 
@@ -977,7 +1011,13 @@ fn addr_add(addr: u64, offset: i32) -> u64 {
 
 #[cfg(test)]
 mod test {
-    use crate::{arch::riscv::cpu::addr_add, cpu::Cpu, mem::Memory};
+    use crate::{
+        arch::riscv::{
+            cpu::addr_add,
+            reg::{A0, RA, SP},
+        },
+        cpu::Cpu,
+    };
 
     use super::RV64Cpu;
 
@@ -1001,9 +1041,9 @@ mod test {
         cpu.init();
 
         cpu.pc = 0x8000_0000;
-        cpu.x[1] = 0x8000_0000 + 0x70; // ra
-        cpu.x[2] = 0x8000_0000 + 0x400; // sp
-        cpu.x[10] = 5; // a0
+        cpu.x[RA] = 0x8000_0000 + 0x70;
+        cpu.x[SP] = 0x8000_0000 + 0x400;
+        cpu.x[A0] = 5;
 
         cpu.load(data);
         cpu.execute();

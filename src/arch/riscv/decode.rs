@@ -1,3 +1,5 @@
+use crate::arch::riscv::csr::csr_readonly;
+
 use super::instruction::{Ordering, RiscvInst};
 
 fn rd(bits: u32) -> u8 {
@@ -1227,11 +1229,11 @@ pub fn decode(bits: u32) -> RiscvInst {
                 0b100 => RiscvInst::Illegal,
                 _ => {
                     // Otherwise this is CSR instruction
-                    let csr = super::csr::Csr(csr(bits));
+                    let csr = csr(bits);
                     // For CSRRS, CSRRC, CSRRSI, CSRRCI, rs1 = 0 means readonly.
                     // If the CSR is readonly while we try to write it, it is an exception.
                     let readonly = function & 0b010 != 0 && rs1 == 0;
-                    if csr.readonly() && !readonly {
+                    if csr_readonly(csr) && !readonly {
                         return RiscvInst::Illegal;
                     }
                     match function {

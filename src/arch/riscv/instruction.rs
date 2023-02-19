@@ -1,5 +1,5 @@
 use super::{
-    csr::Csr,
+    csr::{csr_min_prv_level, INSTRET, INSTRETH, SATP},
     reg::{f_register_name, x_register_name},
 };
 
@@ -113,12 +113,12 @@ pub enum RiscvInst {
     Ebreak,
 
     // CSR instructions
-    Csrrw { rd: u8, rs1: u8, csr: Csr },
-    Csrrs { rd: u8, rs1: u8, csr: Csr },
-    Csrrc { rd: u8, rs1: u8, csr: Csr },
-    Csrrwi { rd: u8, imm: u8, csr: Csr },
-    Csrrsi { rd: u8, imm: u8, csr: Csr },
-    Csrrci { rd: u8, imm: u8, csr: Csr },
+    Csrrw { rd: u8, rs1: u8, csr: u16 },
+    Csrrs { rd: u8, rs1: u8, csr: u16 },
+    Csrrc { rd: u8, rs1: u8, csr: u16 },
+    Csrrwi { rd: u8, imm: u8, csr: u16 },
+    Csrrsi { rd: u8, imm: u8, csr: u16 },
+    Csrrci { rd: u8, imm: u8, csr: u16 },
 
     // Multiply Extension
     Mul { rd: u8, rs1: u8, rs2: u8 },
@@ -266,14 +266,14 @@ impl RiscvInst {
             RiscvInst::Csrrc { csr, .. } |
             RiscvInst::Csrrwi { csr, .. } |
             RiscvInst::Csrrsi { csr, .. } |
-            RiscvInst::Csrrci { csr, .. } => match *csr {
+            RiscvInst::Csrrci { csr, .. } => match *csr as usize {
                 // A common way of using basic blocks is to `batch' instret and pc increment. So if CSR to be accessed is
                 // instret, consider it as special.
-                Csr::Instret |
-                Csr::Instreth |
+                INSTRET |
+                INSTRETH |
                 // SATP shouldn't belong here, but somehow Linux assumes setting SATP changes
                 // addressing mode immediately...
-                Csr::Satp => true,
+                SATP => true,
                 _ => false,
             }
             _ => false,
@@ -288,7 +288,7 @@ impl RiscvInst {
             | RiscvInst::Csrrc { csr, .. }
             | RiscvInst::Csrrwi { csr, .. }
             | RiscvInst::Csrrsi { csr, .. }
-            | RiscvInst::Csrrci { csr, .. } => csr.min_prv_level(),
+            | RiscvInst::Csrrci { csr, .. } => csr_min_prv_level(csr),
             RiscvInst::Mret => 3,
             RiscvInst::Sret | RiscvInst::Wfi | RiscvInst::SfenceVma { .. } => 1,
             _ => 0,
