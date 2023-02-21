@@ -41,6 +41,10 @@ impl Csrs {
             _ => self.csrs[addr] = value.into(),
         }
     }
+
+    pub fn is_medelegated(&self, cause: u64) -> bool {
+        (self.csrs[MEDELEG].data.wrapping_shr(cause as u32) & 1) == 1
+    }
 }
 
 impl Index<u16> for Csrs {
@@ -51,9 +55,51 @@ impl Index<u16> for Csrs {
     }
 }
 
+impl Index<usize> for Csrs {
+    type Output = Csr;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.csrs[index]
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct Csr {
-    data: u64,
+    pub(crate) data: u64,
+}
+
+impl Csr {
+    pub fn mpp(&self) -> u64 {
+        (self.data & MASK_MPP) >> 11
+    }
+
+    pub fn mpie(&self) -> u64 {
+        (self.data & MASK_MPIE) >> 7
+    }
+
+    pub fn mie(&self) -> u64 {
+        (self.data & MASK_MIE) >> 3
+    }
+
+    pub fn spp(&self) -> u64 {
+        (self.data & MASK_SPP) >> 8
+    }
+
+    pub fn spie(&self) -> u64 {
+        (self.data & MASK_SPIE) >> 5
+    }
+
+    pub fn sie(&self) -> u64 {
+        (self.data & MASK_SIE) >> 1
+    }
+
+    pub fn set(&mut self, value: u64) {
+        self.data = value;
+    }
+
+    pub fn clear(&mut self, value: u64) {
+        self.data &= !value;
+    }
 }
 
 impl BitAnd for Csr {
@@ -110,9 +156,9 @@ impl From<u64> for Csr {
     }
 }
 
-impl Into<u64> for Csr {
-    fn into(self) -> u64 {
-        self.data
+impl From<Csr> for u64 {
+    fn from(val: Csr) -> Self {
+        val.data
     }
 }
 

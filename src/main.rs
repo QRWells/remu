@@ -1,9 +1,9 @@
 #[allow(dead_code)]
 pub mod arch;
-pub mod board;
 pub mod bus;
 pub mod cpu;
 pub mod mem;
+pub mod util;
 
 use clap::{arg, command, Parser};
 use env_logger::Env;

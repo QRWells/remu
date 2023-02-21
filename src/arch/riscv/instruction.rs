@@ -31,6 +31,21 @@ pub enum RiscvInstWrapper {
     Compact(RiscvInst),
 }
 
+impl RiscvInstWrapper {
+    pub fn is_compact(&self) -> bool {
+        match self {
+            RiscvInstWrapper::Full(_) => false,
+            RiscvInstWrapper::Compact(_) => true,
+        }
+    }
+
+    pub fn get_inst(&self) -> RiscvInst {
+        match self {
+            RiscvInstWrapper::Full(inst) | RiscvInstWrapper::Compact(inst) => *inst,
+        }
+    }
+}
+
 /// RISC-V Instructions
 #[rustfmt::skip]
 #[derive(Debug,Clone, Copy, PartialEq)]
