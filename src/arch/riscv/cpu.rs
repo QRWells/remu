@@ -1005,15 +1005,12 @@ impl Cpu for RV64Cpu {
             };
             match self.execute(inst_with_len) {
                 Ok(new_pc) => self.pc = new_pc,
-                Err(e) => match e {
-                    Exception::IllegalInstruction(_) => {
+                Err(e) => {
+                    self.handle_exception(e);
+                    if e.is_fatal() {
                         break;
                     }
-                    _ => {
-                        self.handle_exception(e);
-                        break;
-                    }
-                },
+                }
             }
         }
     }

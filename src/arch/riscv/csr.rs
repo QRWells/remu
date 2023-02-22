@@ -1,7 +1,4 @@
-use std::{
-    default,
-    ops::{BitAnd, BitOr, Index, Not},
-};
+use std::ops::{BitAnd, BitOr, Index, Not};
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]

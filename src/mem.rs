@@ -30,33 +30,35 @@ impl Memory {
         }
     }
 
-    pub fn load(&self, addr: u64, size: usize) -> u64 {
+    pub fn load(&self, addr: u64, size: u64) -> u64 {
         let mut val: u64 = 0;
         match self.endianness {
             Endianness::Little => {
                 for i in 0..size {
-                    val |= (self.data[addr as usize + i] as u64) << (i * 8);
+                    val |= (self.data[addr.wrapping_add(i) as usize] as u64) << (i * 8);
                 }
             }
             Endianness::Big => {
                 for i in 0..size {
-                    val |= (self.data[addr as usize + i] as u64) << ((size - i - 1) * 8);
+                    val |=
+                        (self.data[addr.wrapping_add(i) as usize] as u64) << ((size - i - 1) * 8);
                 }
             }
         }
         val
     }
 
-    pub fn store(&mut self, addr: u64, size: usize, val: u64) {
+    pub fn store(&mut self, addr: u64, size: u64, val: u64) {
         match self.endianness {
             Endianness::Little => {
                 for i in 0..size {
-                    self.data[addr as usize + i] = ((val >> (i * 8)) & 0xff) as u8;
+                    self.data[addr.wrapping_add(i) as usize] = ((val >> (i * 8)) & 0xff) as u8;
                 }
             }
             Endianness::Big => {
                 for i in 0..size {
-                    self.data[addr as usize + i] = ((val >> ((size - i - 1) * 8)) & 0xff) as u8;
+                    self.data[addr.wrapping_add(i) as usize] =
+                        ((val >> ((size - i - 1) * 8)) & 0xff) as u8;
                 }
             }
         }

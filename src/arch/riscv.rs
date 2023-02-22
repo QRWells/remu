@@ -1,8 +1,11 @@
 mod bus;
+mod clint;
 pub mod cpu;
 mod csr;
 mod decode;
 mod exception;
 mod instruction;
 mod mmu;
+mod plic;
 mod reg;
+mod uart;
