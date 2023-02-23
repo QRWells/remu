@@ -14,6 +14,9 @@ use super::{
     mmu::MMU,
 };
 
+pub(crate) const HART_COUNT: usize = 8;
+pub(crate) const MAX_HART_COUNT: u64 = 0x3E00;
+
 const MACHINE_MODE: u8 = 0;
 const SUPERVISOR_MODE: u8 = 1;
 const USER_MODE: u8 = 2;
@@ -27,6 +30,7 @@ pub struct RV64Cpu {
     pub(crate) mmu: MMU,
     pub(crate) csr: Csrs,
     pub(crate) mode: u8,
+    pub(crate) hart_id: u64,
 }
 
 impl RV64Cpu {
@@ -40,6 +44,7 @@ impl RV64Cpu {
             mmu: MMU::new(),
             csr: Csrs::new(),
             mode: MACHINE_MODE,
+            hart_id: 0,
         }
     }
 
@@ -988,7 +993,7 @@ impl Cpu for RV64Cpu {
         status.clear(MASK_IE);
         // set SPP / MPP = previous mode
         status = Csr {
-            data: Into::<u64>::into(status & !MASK_PP) | (mode << pp_i) as u64,
+            data: Into::<u64>::into(status & !MASK_PP) | ((mode as u64) << pp_i) as u64,
         };
         self.csr.store(STATUS, status.into());
     }
