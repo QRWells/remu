@@ -7,10 +7,7 @@ use std::{
     thread,
 };
 
-use super::{
-    bus::{UART_BASE, UART_SIZE},
-    exception::Exception,
-};
+use super::{bus::UART_SIZE, exception::Exception};
 
 pub(crate) struct Uart {
     /// Pair of an array for UART buffer and a conditional variable.

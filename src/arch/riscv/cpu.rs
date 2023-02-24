@@ -1,5 +1,5 @@
 use crate::{
-    arch::riscv::csr::*,
+    arch::riscv::{csr::*, plic::get_plic_claim_or_complete, uart::UART_IRQ},
     bus::Bus,
     cpu::Cpu,
     util::{addr_add, double_classify, float_classify},
@@ -11,7 +11,11 @@ use super::{
     decode::{decode, decode_compressed},
     exception::Exception,
     instruction::{RiscvInst, RiscvInstWrapper},
-    mmu::MMU,
+    interrupt::Interrupt,
+    mmu::{
+        AccessType::{Load, Store},
+        MMU,
+    },
 };
 
 pub(crate) const HART_COUNT: usize = 8;
@@ -48,8 +52,60 @@ impl RV64Cpu {
         }
     }
 
+    pub fn check_pending_interrupt(&mut self) -> Option<Interrupt> {
+        use Interrupt::*;
+        if (self.mode == MACHINE_MODE) && (self.csr.load(MSTATUS) & MASK_MIE) == 0 {
+            return None;
+        }
+        if (self.mode == SUPERVISOR_MODE) && (self.csr.load(SSTATUS) & MASK_SIE) == 0 {
+            return None;
+        }
+
+        // In fact, we should using priority to decide which interrupt should be handled first.
+        if self.bus.uart.is_interrupting() {
+            self.bus
+                .store(
+                    get_plic_claim_or_complete(self.hart_id, SUPERVISOR_MODE),
+                    4,
+                    UART_IRQ,
+                )
+                .unwrap();
+            self.csr.set(MIP, MASK_SSIP);
+        }
+        let pending = self.csr.load(MIE) & self.csr.load(MIP);
+
+        if (pending & MASK_MEIP) != 0 {
+            self.csr.clear(MIP, MASK_MEIP);
+            return Some(MachineExternalInterrupt);
+        }
+        if (pending & MASK_MSIP) != 0 {
+            self.csr.clear(MIP, MASK_MSIP);
+            return Some(MachineSoftwareInterrupt);
+        }
+        if (pending & MASK_MTIP) != 0 {
+            self.csr.clear(MIP, MASK_MTIP);
+            return Some(MachineTimerInterrupt);
+        }
+        if (pending & MASK_SEIP) != 0 {
+            self.csr.clear(MIP, MASK_SEIP);
+            return Some(SupervisorExternalInterrupt);
+        }
+        if (pending & MASK_SSIP) != 0 {
+            self.csr.clear(MIP, MASK_SSIP);
+            return Some(SupervisorSoftwareInterrupt);
+        }
+        if (pending & MASK_STIP) != 0 {
+            self.csr.clear(MIP, MASK_STIP);
+            return Some(SupervisorTimerInterrupt);
+        }
+        None
+    }
+
     pub fn fetch(&mut self) -> Result<RiscvInstWrapper, Exception> {
-        let addr = self.mmu.translate(self.pc).expect("Translation failed");
+        let addr = self
+            .mmu
+            .translate(super::mmu::AccessType::Instruction, &mut self.bus, self.pc)
+            .expect("Translation failed");
         match self.bus.load(addr, 1) {
             Ok(val) => match val & 0x3 {
                 0x3 => {
@@ -75,49 +131,49 @@ impl RV64Cpu {
             RiscvInst::Lb { rd, rs1, imm } => {
                 let addr = self
                     .mmu
-                    .translate(addr_add(self.x[rs1 as usize], imm))
+                    .translate(Load, &mut self.bus, addr_add(self.x[rs1 as usize], imm))
                     .expect("Translation failed");
                 self.x[rd as usize] = self.bus.load_byte(addr).expect("Load failed") as i8 as u64;
             }
             RiscvInst::Lh { rd, rs1, imm } => {
                 let addr = self
                     .mmu
-                    .translate(addr_add(self.x[rs1 as usize], imm))
+                    .translate(Load, &mut self.bus, addr_add(self.x[rs1 as usize], imm))
                     .expect("Translation failed");
                 self.x[rd as usize] = self.bus.load_half(addr).expect("Load failed") as i16 as u64;
             }
             RiscvInst::Lw { rd, rs1, imm } => {
                 let addr = self
                     .mmu
-                    .translate(addr_add(self.x[rs1 as usize], imm))
+                    .translate(Load, &mut self.bus, addr_add(self.x[rs1 as usize], imm))
                     .expect("Translation failed");
                 self.x[rd as usize] = self.bus.load_word(addr).expect("Load failed") as i32 as u64;
             }
             RiscvInst::Ld { rd, rs1, imm } => {
                 let addr = self
                     .mmu
-                    .translate(addr_add(self.x[rs1 as usize], imm))
+                    .translate(Load, &mut self.bus, addr_add(self.x[rs1 as usize], imm))
                     .expect("Translation failed");
                 self.x[rd as usize] = self.bus.load(addr, 8).expect("Load failed");
             }
             RiscvInst::Lbu { rd, rs1, imm } => {
                 let addr = self
                     .mmu
-                    .translate(addr_add(self.x[rs1 as usize], imm))
+                    .translate(Load, &mut self.bus, addr_add(self.x[rs1 as usize], imm))
                     .expect("Translation failed");
                 self.x[rd as usize] = self.bus.load_byte(addr).expect("Load failed") as u64;
             }
             RiscvInst::Lhu { rd, rs1, imm } => {
                 let addr = self
                     .mmu
-                    .translate(addr_add(self.x[rs1 as usize], imm))
+                    .translate(Load, &mut self.bus, addr_add(self.x[rs1 as usize], imm))
                     .expect("Translation failed");
                 self.x[rd as usize] = self.bus.load_half(addr).expect("Load failed") as u64;
             }
             RiscvInst::Lwu { rd, rs1, imm } => {
                 let addr = self
                     .mmu
-                    .translate(addr_add(self.x[rs1 as usize], imm))
+                    .translate(Load, &mut self.bus, addr_add(self.x[rs1 as usize], imm))
                     .expect("Translation failed");
                 self.x[rd as usize] = self.bus.load_word(addr).expect("Load failed") as u64;
             }
@@ -202,7 +258,11 @@ impl RV64Cpu {
             RiscvInst::Sb { rs1, rs2, imm } => {
                 let addr = self
                     .mmu
-                    .translate(self.x[rs1 as usize].wrapping_add(imm as u64))
+                    .translate(
+                        Store,
+                        &mut self.bus,
+                        self.x[rs1 as usize].wrapping_add(imm as u64),
+                    )
                     .expect("memory access violation");
                 self.bus
                     .store_byte(addr, self.x[rs2 as usize] as u8)
@@ -211,7 +271,11 @@ impl RV64Cpu {
             RiscvInst::Sh { rs1, rs2, imm } => {
                 let addr = self
                     .mmu
-                    .translate(self.x[rs1 as usize].wrapping_add(imm as u64))
+                    .translate(
+                        Store,
+                        &mut self.bus,
+                        self.x[rs1 as usize].wrapping_add(imm as u64),
+                    )
                     .expect("memory access violation");
                 let bytes = self.x[rs2 as usize].to_le_bytes();
                 self.bus
@@ -221,7 +285,11 @@ impl RV64Cpu {
             RiscvInst::Sw { rs1, rs2, imm } => {
                 let addr = self
                     .mmu
-                    .translate(self.x[rs1 as usize].wrapping_add(imm as u64))
+                    .translate(
+                        Store,
+                        &mut self.bus,
+                        self.x[rs1 as usize].wrapping_add(imm as u64),
+                    )
                     .expect("memory access violation");
                 let bytes = self.x[rs2 as usize].to_le_bytes();
                 self.bus
@@ -231,7 +299,11 @@ impl RV64Cpu {
             RiscvInst::Sd { rs1, rs2, imm } => {
                 let addr = self
                     .mmu
-                    .translate(self.x[rs1 as usize].wrapping_add(imm as u64))
+                    .translate(
+                        Store,
+                        &mut self.bus,
+                        self.x[rs1 as usize].wrapping_add(imm as u64),
+                    )
                     .expect("memory access violation");
                 let bytes = self.x[rs2 as usize].to_le_bytes();
                 self.bus
@@ -325,11 +397,20 @@ impl RV64Cpu {
                 self.x[rd as usize] = self.pc + 4;
                 return Ok(self.pc.wrapping_add(imm as u64));
             }
-            RiscvInst::Ecall => {
-                todo!("ecall")
-            }
+            RiscvInst::Ecall => match self.mode {
+                USER_MODE => {
+                    return Err(Exception::EnvironmentCallFromUMode(self.pc));
+                }
+                SUPERVISOR_MODE => {
+                    return Err(Exception::EnvironmentCallFromSMode(self.pc));
+                }
+                MACHINE_MODE => {
+                    return Err(Exception::EnvironmentCallFromMMode(self.pc));
+                }
+                _ => unreachable!(),
+            },
             RiscvInst::Ebreak => {
-                todo!("ebreak")
+                return Err(Exception::Breakpoint(self.pc));
             }
 
             RiscvInst::Csrrw { rd, rs1, csr } => {
@@ -480,7 +561,11 @@ impl RV64Cpu {
             RiscvInst::Flw { frd, rs1, imm } => {
                 let addr = self
                     .mmu
-                    .translate(self.x[rs1 as usize].wrapping_add(imm as u64))
+                    .translate(
+                        Load,
+                        &mut self.bus,
+                        self.x[rs1 as usize].wrapping_add(imm as u64),
+                    )
                     .expect("memory access invalid");
                 let val = self.bus.load_word(addr).expect("memory access invalid");
                 self.f[frd as usize] = f32::from_bits(val) as f64;
@@ -488,7 +573,11 @@ impl RV64Cpu {
             RiscvInst::Fsw { rs1, frs2, imm } => {
                 let addr = self
                     .mmu
-                    .translate(self.x[rs1 as usize].wrapping_add(imm as u64))
+                    .translate(
+                        Store,
+                        &mut self.bus,
+                        self.x[rs1 as usize].wrapping_add(imm as u64),
+                    )
                     .expect("memory access invalid");
                 let val = self.f[frs2 as usize] as f32;
                 self.bus
@@ -534,7 +623,6 @@ impl RV64Cpu {
                 let a = self.f[frs1 as usize] as f32;
                 let b = self.f[frs2 as usize] as f32;
                 self.f[frd as usize] = (a / b) as f64;
-                todo!("rm")
             }
             RiscvInst::FsqrtS { frd, frs1, rm } => {
                 let a = self.f[frs1 as usize] as f32;
@@ -678,7 +766,7 @@ impl RV64Cpu {
             RiscvInst::Fld { frd, rs1, imm } => {
                 let addr = self
                     .mmu
-                    .translate(addr_add(self.x[rs1 as usize], imm))
+                    .translate(Load, &mut self.bus, addr_add(self.x[rs1 as usize], imm))
                     .expect("memory fault");
                 self.f[frd as usize] =
                     f64::from_bits(self.bus.load_double(addr).expect("memory fault"));
@@ -686,7 +774,7 @@ impl RV64Cpu {
             RiscvInst::Fsd { rs1, frs2, imm } => {
                 let addr = self
                     .mmu
-                    .translate(addr_add(self.x[rs1 as usize], imm))
+                    .translate(Store, &mut self.bus, addr_add(self.x[rs1 as usize], imm))
                     .expect("memory fault");
                 self.bus
                     .store_double(addr, self.f[frs2 as usize].to_bits().to_le_bytes())
@@ -944,6 +1032,46 @@ impl Cpu for RV64Cpu {
         self.x = [0; 32];
     }
 
+    fn handle_interrupt(&mut self, int: Interrupt) {
+        let pc = self.pc;
+        let mode = self.mode;
+        let cause = int.code();
+        let trap_in_s_mode = mode <= SUPERVISOR_MODE && self.csr.is_midelegated(cause);
+        let (STATUS, TVEC, CAUSE, TVAL, EPC, MASK_PIE, pie_i, MASK_IE, ie_i, MASK_PP, pp_i) =
+            if trap_in_s_mode {
+                self.mode = SUPERVISOR_MODE;
+                (
+                    SSTATUS, STVEC, SCAUSE, STVAL, SEPC, MASK_SPIE, 5, MASK_SIE, 1, MASK_SPP, 8,
+                )
+            } else {
+                self.mode = MACHINE_MODE;
+                (
+                    MSTATUS, MTVEC, MCAUSE, MTVAL, MEPC, MASK_MPIE, 7, MASK_MIE, 3, MASK_MPP, 11,
+                )
+            };
+
+        let tvec = self.csr.load(TVEC);
+        let tvec_mode = (tvec & 0b11).into();
+        let tvec_base = (tvec & !0b11).into();
+        match tvec_mode {
+            // DIrect
+            0 => self.pc = tvec_base,
+            1 => self.pc = tvec_base + (cause << 2),
+            _ => unreachable!(),
+        };
+
+        self.csr.store(EPC, pc);
+        self.csr.store(CAUSE, cause);
+        self.csr.store(TVAL, 0);
+
+        let mut status = self.csr.load(STATUS);
+        let ie = (status & MASK_IE) >> ie_i;
+        status = (status & !MASK_PIE) | (ie << pie_i);
+        status.clear(MASK_IE);
+        status = (status & !MASK_PP) | (mode << pp_i) as u64;
+        self.csr.store(STATUS, status.into());
+    }
+
     fn handle_exception(&mut self, e: Exception) {
         let pc = self.pc;
         let mode = self.mode;
@@ -1017,10 +1145,16 @@ impl Cpu for RV64Cpu {
                     }
                 }
             }
+
+            match self.check_pending_interrupt() {
+                Some(interrupt) => self.handle_interrupt(interrupt),
+                None => (),
+            }
         }
     }
 
     type Exception = Exception;
+    type Interrupt = Interrupt;
 }
 
 #[cfg(test)]

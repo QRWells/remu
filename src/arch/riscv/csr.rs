@@ -1,4 +1,4 @@
-use std::ops::{BitAnd, BitOr, Index, Not};
+use std::ops::{BitAnd, BitOr, Index, Not, Shl, Shr};
 
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy)]
@@ -41,6 +41,18 @@ impl Csrs {
 
     pub fn is_medelegated(&self, cause: u64) -> bool {
         (self.csrs[MEDELEG].data.wrapping_shr(cause as u32) & 1) == 1
+    }
+
+    pub fn is_midelegated(&self, cause: u64) -> bool {
+        (self.csrs[MIDELEG].data.wrapping_shr(cause as u32) & 1) == 1
+    }
+
+    pub fn set(&mut self, addr: usize, bit: u64) {
+        self.csrs[addr].set(bit);
+    }
+
+    pub fn clear(&mut self, addr: usize, bit: u64) {
+        self.csrs[addr].clear(bit);
     }
 }
 
@@ -90,12 +102,24 @@ impl Csr {
         (self.data & MASK_SIE) >> 1
     }
 
-    pub fn set(&mut self, value: u64) {
-        self.data = value;
+    pub fn set(&mut self, bit: u64) {
+        self.data |= bit;
     }
 
-    pub fn clear(&mut self, value: u64) {
-        self.data &= !value;
+    pub fn clear(&mut self, bit: u64) {
+        self.data &= !bit;
+    }
+}
+
+impl PartialEq for Csr {
+    fn eq(&self, other: &Self) -> bool {
+        self.data == other.data
+    }
+}
+
+impl PartialEq<u64> for Csr {
+    fn eq(&self, other: &u64) -> bool {
+        self.data == *other
     }
 }
 
@@ -135,6 +159,26 @@ impl BitOr<u64> for Csr {
     fn bitor(self, rhs: u64) -> Self::Output {
         Self {
             data: self.data | rhs,
+        }
+    }
+}
+
+impl Shl<u64> for Csr {
+    type Output = Self;
+
+    fn shl(self, rhs: u64) -> Self::Output {
+        Self {
+            data: self.data << rhs,
+        }
+    }
+}
+
+impl Shr<u64> for Csr {
+    type Output = Self;
+
+    fn shr(self, rhs: u64) -> Self::Output {
+        Self {
+            data: self.data << rhs,
         }
     }
 }

@@ -6,7 +6,7 @@ pub struct RiscvBus {
     mem: Memory,
     plic: plic::Plic,
     clint: clint::Clint,
-    uart: uart::Uart,
+    pub(crate) uart: uart::Uart,
 }
 
 const DRAM_BASE: u64 = 0x8000_0000;

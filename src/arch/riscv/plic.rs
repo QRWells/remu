@@ -49,10 +49,9 @@ const INT_ENABLE_BITS_BASE: u64 = 0x2000;
 const INT_ENABLE_BITS_STRIDE: u64 = 0x80;
 const INT_ENABLE_BITS_END: u64 = INT_ENABLE_BITS_BASE + INT_ENABLE_BITS_STRIDE * MAX_HART_COUNT - 1;
 
-const INT_PRIORITY_THRESHOLD_BASE: u64 = 0x200000;
-const INT_PRIORITY_THRESHOLD_STRIDE: u64 = 0x1000;
-const INT_PRIORITY_THRESHOLD_END: u64 =
-    INT_PRIORITY_THRESHOLD_BASE + INT_PRIORITY_THRESHOLD_STRIDE * MAX_HART_COUNT - 1;
+const INT_CONTEXT_BASE: u64 = 0x200000;
+const INT_CONTEXT_STRIDE: u64 = 0x1000;
+const INT_CONTEXT_END: u64 = INT_CONTEXT_BASE + INT_CONTEXT_STRIDE * MAX_HART_COUNT - 1;
 
 #[derive(Debug, PartialEq)]
 enum PlicOp {
@@ -79,12 +78,10 @@ fn parse_addr(addr: u64) -> Result<PlicOp, ()> {
             let context = ((relative - INT_ENABLE_BITS_BASE) % INT_ENABLE_BITS_STRIDE) as u32;
             Ok(PlicOp::EnableBitsForSourcesAndOnContext(source, context))
         }
-        INT_PRIORITY_THRESHOLD_BASE..=INT_PRIORITY_THRESHOLD_END => {
-            let context =
-                ((relative - INT_PRIORITY_THRESHOLD_BASE) / INT_PRIORITY_THRESHOLD_STRIDE) as u32;
-            let threshold =
-                ((relative - INT_PRIORITY_THRESHOLD_BASE) % INT_PRIORITY_THRESHOLD_STRIDE) as u32;
-            match threshold {
+        INT_CONTEXT_BASE..=INT_CONTEXT_END => {
+            let context = ((relative - INT_CONTEXT_BASE) / INT_CONTEXT_STRIDE) as u32;
+            let offset = ((relative - INT_CONTEXT_BASE) % INT_CONTEXT_STRIDE) as u32;
+            match offset {
                 0 => Ok(PlicOp::PriorityThresholdForContext(context)),
                 4 => Ok(PlicOp::ClaimOrCompleteForContext(context)),
                 _ => Err(()),
@@ -92,6 +89,10 @@ fn parse_addr(addr: u64) -> Result<PlicOp, ()> {
         }
         _ => Err(()),
     }
+}
+
+pub(crate) fn get_plic_claim_or_complete(hart_id: u64, mode: u8) -> u64 {
+    PLIC_BASE + INT_CONTEXT_BASE + INT_CONTEXT_STRIDE * (2 * hart_id + mode as u64) + 4
 }
 
 impl Plic {
@@ -176,6 +177,11 @@ mod test {
         assert_eq!(
             super::parse_addr(PLIC_BASE + 0x201000),
             Ok(super::PlicOp::PriorityThresholdForContext(0x1))
+        );
+
+        assert_eq!(
+            super::parse_addr(PLIC_BASE + 0x201004),
+            Ok(super::PlicOp::ClaimOrCompleteForContext(0x1))
         );
 
         assert_eq!(

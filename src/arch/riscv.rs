@@ -5,6 +5,7 @@ mod csr;
 mod decode;
 mod exception;
 mod instruction;
+mod interrupt;
 mod mmu;
 mod plic;
 mod reg;
