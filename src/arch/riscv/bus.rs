@@ -1,11 +1,12 @@
 use crate::{bus::Bus, mem::Memory};
 
-use super::{clint, exception::Exception, plic};
+use super::{clint, exception::Exception, plic, uart};
 
 pub struct RiscvBus {
     mem: Memory,
     plic: plic::Plic,
     clint: clint::Clint,
+    uart: uart::Uart,
 }
 
 const DRAM_BASE: u64 = 0x8000_0000;
@@ -20,12 +21,17 @@ pub(crate) const CLINT_BASE: u64 = 0x200_0000;
 pub(crate) const CLINT_SIZE: u64 = 0x10000;
 pub(crate) const CLINT_END: u64 = CLINT_BASE + CLINT_SIZE - 1;
 
+pub(crate) const UART_BASE: u64 = 0x1000_0000;
+pub(crate) const UART_SIZE: u64 = 0x100;
+pub(crate) const UART_END: u64 = UART_BASE + UART_SIZE - 1;
+
 impl RiscvBus {
     pub fn new() -> Self {
         Self {
             mem: Memory::new(crate::mem::Endianness::Little),
             plic: plic::Plic::new(),
             clint: clint::Clint::new(),
+            uart: uart::Uart::new(),
         }
     }
 
@@ -100,11 +106,12 @@ impl RiscvBus {
 impl Bus for RiscvBus {
     type Exception = Exception;
 
-    fn load(&self, addr: u64, size: u64) -> Result<u64, Self::Exception> {
+    fn load(&mut self, addr: u64, size: u64) -> Result<u64, Self::Exception> {
         match addr {
             DRAM_BASE..=DRAM_END => Ok(self.mem.load(addr - DRAM_BASE, size)),
             PLIC_BASE..=PLIC_END => self.plic.load(addr - PLIC_BASE, size),
             CLINT_BASE..=CLINT_END => self.clint.load(addr - CLINT_BASE, size),
+            UART_BASE..=UART_END => self.uart.load(addr - UART_BASE, size),
             _ => Err(Exception::LoadAccessFault(addr)),
         }
     }
@@ -114,6 +121,7 @@ impl Bus for RiscvBus {
             DRAM_BASE..=DRAM_END => Ok(self.mem.store(addr - DRAM_BASE, size, data)),
             PLIC_BASE..=PLIC_END => self.plic.store(addr - PLIC_BASE, size, data),
             CLINT_BASE..=CLINT_END => self.clint.store(addr - CLINT_BASE, size, data),
+            UART_BASE..=UART_END => self.uart.store(addr - UART_BASE, size, data),
             _ => Err(Exception::StoreAMOAccessFault(addr)),
         }
     }
