@@ -152,6 +152,10 @@ impl MMU {
         }
     }
 
+    pub fn set_ppn(&mut self, satp: u64) {
+        self.physical_page_number = satp & 0xfff_ffff_ffff;
+    }
+
     pub fn translate(
         &self,
         access_type: AccessType,
